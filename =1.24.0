@@ -1,0 +1,7 @@
+Collecting numpy
+  Downloading numpy-2.4.0-cp313-cp313-macosx_14_0_arm64.whl.metadata (6.6 kB)
+Downloading numpy-2.4.0-cp313-cp313-macosx_14_0_arm64.whl (5.2 MB)
+   ━━━━━ 5.2/… 16.6  0:00:…
+         MB    MB/s        
+Installing collected packages: numpy
+Successfully installed numpy-2.4.0
