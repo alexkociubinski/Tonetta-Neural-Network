@@ -267,7 +267,8 @@ class VoiceControlModel:
     
     def load(self, filepath: str):
         """Load model weights from disk."""
-        self.model = keras.models.load_model(filepath)
+        # Use compile=False to avoid issues with custom metrics during loading
+        self.model = keras.models.load_model(filepath, compile=False)
         print(f"✓ Model loaded from {filepath}")
 
 

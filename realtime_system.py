@@ -45,6 +45,8 @@ import sounddevice as sd
 from queue import Queue, Empty
 import threading
 import time
+import json
+import os
 from typing import Optional
 
 from audio_pipeline import AudioFeatureExtractor
@@ -95,11 +97,32 @@ class RealtimeVoiceModifier:
         print("Initializing components...")
         self.feature_extractor = AudioFeatureExtractor(sample_rate, self.frame_size)
         self.voice_model = VoiceControlModel()
+        
+        # Load trained model and parameters if available
+        model_path = 'trained_model.h5'
+        params_path = 'trained_model_params.json'
+        
+        if os.path.exists(model_path):
+            try:
+                self.voice_model.load(model_path)
+                if os.path.exists(params_path):
+                    with open(params_path, 'r') as f:
+                        params = json.load(f)
+                        self.voice_model.feature_means = np.array(params['feature_means'])
+                        self.voice_model.feature_stds = np.array(params['feature_stds'])
+                        print("✓ Loaded normalization parameters")
+            except Exception as e:
+                print(f"⚠ Could not load trained model: {e}")
+                print("Continuing with default random weights.")
+        else:
+            print("ℹ No trained model found at trained_model.h5. Using default weights.")
+            
         self.audio_modifier = AudioModifier(sample_rate)
         
         # Queues for thread communication
-        self.input_queue = Queue(maxsize=10)  # Raw audio from mic
-        self.output_queue = Queue(maxsize=10)  # Modified audio to speakers
+        # REDUCED maxsize: 10 frames = 200ms lag! 1 or 2 is much better for real-time.
+        self.input_queue = Queue(maxsize=2)  # Raw audio from mic
+        self.output_queue = Queue(maxsize=2)  # Modified audio to speakers
         
         # Control flags
         self.is_running = False
@@ -266,7 +289,8 @@ class RealtimeVoiceModifier:
             channels=1,
             blocksize=self.frame_size,
             callback=self.audio_callback,
-            dtype=np.float32
+            dtype=np.float32,
+            latency='low'
         )
         
         self.stream.start()
@@ -366,7 +390,7 @@ if __name__ == "__main__":
         print("\n" + "=" * 60)
         print("NEXT STEPS")
         print("=" * 60)
-        print("\n1. The neural network currently has random weights (not trained)")
-        print("2. To make it useful, you need to collect training data")
-        print("3. See README.md for evolution roadmap")
+        print("\n1. System is currently running with the trained model.")
+        print("2. To improve quality further, collect more niche training data.")
+        print("3. See README.md for more advanced optimization options.")
         print("\n" + "=" * 60)

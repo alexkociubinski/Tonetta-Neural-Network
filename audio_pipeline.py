@@ -69,40 +69,66 @@ class AudioFeatureExtractor:
         """
         return np.sqrt(np.mean(frame ** 2))
     
-    def extract_pitch(self, frame: np.ndarray) -> Optional[float]:
+    def extract_pitch(self, frame: np.ndarray, method: str = 'fast') -> Optional[float]:
         """
         Extract fundamental frequency (F0) - the pitch of the voice.
         
-        PLAIN ENGLISH:
-        - Your voice creates vibrations at a certain speed
-        - Male voices: ~85-180 Hz (slower vibrations, deeper sound)
-        - Female voices: ~165-255 Hz (faster vibrations, higher sound)
-        - This function detects that vibration speed
+        METHODS:
+        - 'fast': Autocorrelation-based (very fast, <1ms)
+        - 'pyin': Probabilistic YIN (very accurate but slow, ~40ms)
         
         Returns:
-            Pitch in Hz, or None if no pitch detected (silence or noise)
+            Pitch in Hz, or None if no pitch detected
         """
         # Update rolling buffer for pitch detection
         self.pitch_buffer = np.roll(self.pitch_buffer, -len(frame))
         self.pitch_buffer[-len(frame):] = frame
         
-        # Use librosa's pyin (probabilistic YIN) for pitch detection
-        # This is more accurate than simple autocorrelation
-        try:
-            f0, voiced_flag, voiced_probs = librosa.pyin(
-                self.pitch_buffer,
-                fmin=librosa.note_to_hz('C2'),  # ~65 Hz (low male voice)
-                fmax=librosa.note_to_hz('C7'),  # ~2093 Hz (very high voice)
-                sr=self.sample_rate,
-                frame_length=self.pitch_buffer_size
-            )
-            
-            # Return the most recent pitch estimate if voiced
-            if f0 is not None and len(f0) > 0 and not np.isnan(f0[-1]):
-                return float(f0[-1])
-        except Exception as e:
-            # Pitch detection can fail on noisy audio, that's okay
-            pass
+        if method == 'fast':
+            # FAST AUTOCORRELATION METHOD
+            try:
+                # 1. Apply windowing
+                windowed = self.pitch_buffer * np.hanning(len(self.pitch_buffer))
+                
+                # 2. Compute autocorrelation
+                corr = np.correlate(windowed, windowed, mode='full')
+                corr = corr[len(corr)//2:]
+                
+                # 3. Find peaks in a reasonable range (65Hz to 1000Hz)
+                dmin = int(self.sample_rate / 1000)
+                dmax = int(self.sample_rate / 65)
+                
+                if dmax > len(corr):
+                    dmax = len(corr)
+                
+                # Only look in the range [dmin, dmax]
+                search_region = corr[dmin:dmax]
+                if len(search_region) == 0:
+                    return None
+                    
+                peak = np.argmax(search_region) + dmin
+                
+                # 4. Check if peak is strong enough to be periodic
+                if corr[peak] > 0.3 * corr[0]:  # Energy threshold
+                    pitch = self.sample_rate / peak
+                    return float(pitch)
+            except:
+                pass
+                
+        elif method == 'pyin':
+            # HIGH-ACCURACY BUT SLOW METHOD
+            try:
+                f0, voiced_flag, voiced_probs = librosa.pyin(
+                    self.pitch_buffer,
+                    fmin=librosa.note_to_hz('C2'),
+                    fmax=librosa.note_to_hz('C7'),
+                    sr=self.sample_rate,
+                    frame_length=self.pitch_buffer_size
+                )
+                if f0 is not None and len(f0) > 0 and not np.isnan(f0[-1]):
+                    return float(f0[-1])
+            except:
+                pass
         
         return None
     

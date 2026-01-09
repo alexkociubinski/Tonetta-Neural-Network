@@ -70,6 +70,7 @@ class FastRealtimeVoiceModifier:
         print("Initializing optimized components...")
         self.feature_extractor = FastAudioFeatureExtractor(sample_rate, self.frame_size)
         self.voice_model = VoiceControlModel()
+        self.voice_model.load('models/trained_model.h5')
         self.audio_modifier = AudioModifier(sample_rate)
         
         # Queues

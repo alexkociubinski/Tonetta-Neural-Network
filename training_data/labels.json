@@ -1,0 +1,65 @@
+[
+  {
+    "filename": "recording_20251225_220728.wav",
+    "filepath": "training_data/recordings/recording_20251225_220728.wav",
+    "timestamp": "20251225_220728",
+    "confidence": 0.1,
+    "energy": 0.2,
+    "pace": 0.1,
+    "notes": "n/a"
+  },
+  {
+    "filename": "recording_20251228_155442.wav",
+    "filepath": "training_data/recordings/recording_20251228_155442.wav",
+    "timestamp": "20251228_155442",
+    "confidence": 0.7,
+    "energy": 0.5,
+    "pace": 0.5,
+    "notes": "na"
+  },
+  {
+    "filename": "recording_20251228_155537.wav",
+    "filepath": "training_data/recordings/recording_20251228_155537.wav",
+    "timestamp": "20251228_155537",
+    "confidence": 0.9,
+    "energy": 0.8,
+    "pace": 0.7,
+    "notes": "na"
+  },
+  {
+    "filename": "recording_20251228_155638.wav",
+    "filepath": "training_data/recordings/recording_20251228_155638.wav",
+    "timestamp": "20251228_155638",
+    "confidence": 0.8,
+    "energy": 0.6,
+    "pace": 0.6,
+    "notes": "na"
+  },
+  {
+    "filename": "recording_20251228_155724.wav",
+    "filepath": "training_data/recordings/recording_20251228_155724.wav",
+    "timestamp": "20251228_155724",
+    "confidence": 0.8,
+    "energy": 0.8,
+    "pace": 0.7,
+    "notes": "ns"
+  },
+  {
+    "filename": "recording_20251228_155812.wav",
+    "filepath": "training_data/recordings/recording_20251228_155812.wav",
+    "timestamp": "20251228_155812",
+    "confidence": 0.7,
+    "energy": 0.6,
+    "pace": 0.6,
+    "notes": "na"
+  },
+  {
+    "filename": "recording_20251228_160047.wav",
+    "filepath": "training_data/recordings/recording_20251228_160047.wav",
+    "timestamp": "20251228_160047",
+    "confidence": 0.7,
+    "energy": 0.8,
+    "pace": 0.6,
+    "notes": "na"
+  }
+]

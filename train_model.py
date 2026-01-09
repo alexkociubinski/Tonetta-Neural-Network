@@ -22,11 +22,110 @@ from tensorflow import keras
 from tensorflow.keras import layers, callbacks
 import json
 import os
+import argparse
 from typing import List, Dict, Tuple
 from datetime import datetime
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend
+import matplotlib.pyplot as plt
 
 from voice_model import VoiceControlModel
 from audio_pipeline import AudioFeatureExtractor
+
+
+def load_preprocessed_data(data_dir: str = 'training_data') -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Load preprocessed .npz files from disk.
+    
+    Args:
+        data_dir: Directory containing commonvoice_train.npz and commonvoice_val.npz
+    
+    Returns:
+        X_train, y_train, X_val, y_val
+    """
+    train_path = os.path.join(data_dir, 'commonvoice_train.npz')
+    val_path = os.path.join(data_dir, 'commonvoice_val.npz')
+    
+    if not os.path.exists(train_path):
+        raise FileNotFoundError(
+            f"Training data not found at {train_path}. "
+            "Run preprocess_commonvoice.py first."
+        )
+    
+    train_data = np.load(train_path)
+    val_data = np.load(val_path)
+    
+    X_train = train_data['X']
+    y_train = train_data['y']
+    X_val = val_data['X']
+    y_val = val_data['y']
+    
+    print(f"Loaded preprocessed data from {data_dir}:")
+    print(f"  Training samples: {len(X_train)}")
+    print(f"  Validation samples: {len(X_val)}")
+    
+    return X_train, y_train, X_val, y_val
+
+
+def save_training_log(history, output_path: str = 'training_log.txt'):
+    """
+    Save training history and loss curves.
+    
+    Args:
+        history: Keras training history object
+        output_path: Path to save the log
+    """
+    # Save loss curves as image
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
+    
+    # Loss curve
+    ax1.plot(history.history['loss'], label='Training Loss')
+    ax1.plot(history.history['val_loss'], label='Validation Loss')
+    ax1.set_xlabel('Epoch')
+    ax1.set_ylabel('Loss (MSE)')
+    ax1.set_title('Training and Validation Loss')
+    ax1.legend()
+    ax1.grid(True)
+    
+    # MAE curve
+    ax2.plot(history.history['mae'], label='Training MAE')
+    ax2.plot(history.history['val_mae'], label='Validation MAE')
+    ax2.set_xlabel('Epoch')
+    ax2.set_ylabel('MAE')
+    ax2.set_title('Mean Absolute Error')
+    ax2.legend()
+    ax2.grid(True)
+    
+    plt.tight_layout()
+    plt.savefig(output_path.replace('.txt', '.png'), dpi=150)
+    plt.close()
+    
+    # Save text log
+    with open(output_path, 'w') as f:
+        f.write("TRAINING LOG\n")
+        f.write("=" * 60 + "\n")
+        f.write(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+        
+        f.write("Final Metrics:\n")
+        f.write(f"  Training Loss: {history.history['loss'][-1]:.6f}\n")
+        f.write(f"  Validation Loss: {history.history['val_loss'][-1]:.6f}\n")
+        f.write(f"  Training MAE: {history.history['mae'][-1]:.6f}\n")
+        f.write(f"  Validation MAE: {history.history['val_mae'][-1]:.6f}\n")
+        f.write(f"  Epochs completed: {len(history.history['loss'])}\n\n")
+        
+        f.write("Epoch-by-Epoch:\n")
+        f.write("-" * 60 + "\n")
+        f.write(f"{'Epoch':<8} {'Train Loss':<15} {'Val Loss':<15} {'Train MAE':<15} {'Val MAE':<15}\n")
+        f.write("-" * 60 + "\n")
+        
+        for i in range(len(history.history['loss'])):
+            f.write(f"{i+1:<8} {history.history['loss'][i]:<15.6f} "
+                   f"{history.history['val_loss'][i]:<15.6f} "
+                   f"{history.history['mae'][i]:<15.6f} "
+                   f"{history.history['val_mae'][i]:<15.6f}\n")
+    
+    print(f"\n✓ Training log saved to {output_path}")
+    print(f"✓ Loss curves saved to {output_path.replace('.txt', '.png')}")
 
 
 class TrainingDataCollector:
@@ -238,8 +337,23 @@ class VoiceModelTrainer:
         self.model.feature_means = np.mean(X_train, axis=0)
         self.model.feature_stds = np.std(X_train, axis=0)
         
+        # Handle columns with zero std (e.g., speaking_rate is always 1.0)
+        # Replace zero std with 1.0 to avoid division by zero
+        self.model.feature_stds = np.where(
+            self.model.feature_stds == 0, 
+            1.0, 
+            self.model.feature_stds
+        )
+        
         X_train_norm = (X_train - self.model.feature_means) / self.model.feature_stds
         X_val_norm = (X_val - self.model.feature_means) / self.model.feature_stds
+        
+        # Check for NaN values
+        if np.isnan(X_train_norm).any():
+            print("Warning: NaN values detected in training data, replacing with 0")
+            X_train_norm = np.nan_to_num(X_train_norm, nan=0.0)
+        if np.isnan(X_val_norm).any():
+            X_val_norm = np.nan_to_num(X_val_norm, nan=0.0)
         
         # Compile model with optimizer
         optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
@@ -293,6 +407,7 @@ class VoiceModelTrainer:
     def evaluate(self, X_val: np.ndarray, y_val: np.ndarray):
         """Evaluate model on validation set."""
         X_val_norm = (X_val - self.model.feature_means) / self.model.feature_stds
+        X_val_norm = np.nan_to_num(X_val_norm, nan=0.0)
         
         loss, mae = self.model.model.evaluate(X_val_norm, y_val, verbose=0)
         
@@ -328,94 +443,133 @@ class VoiceModelTrainer:
         print(f"\n✓ Model saved to {filepath}")
 
 
-# Example usage and demo
+# Command-line interface for training
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description='Train voice model on preprocessed Common Voice data'
+    )
+    parser.add_argument(
+        '--data-dir', type=str, default='training_data',
+        help='Directory containing preprocessed .npz files'
+    )
+    parser.add_argument(
+        '--epochs', type=int, default=100,
+        help='Number of training epochs (default: 100)'
+    )
+    parser.add_argument(
+        '--batch-size', type=int, default=32,
+        help='Batch size for training (default: 32)'
+    )
+    parser.add_argument(
+        '--learning-rate', type=float, default=0.001,
+        help='Learning rate for Adam optimizer (default: 0.001)'
+    )
+    parser.add_argument(
+        '--patience', type=int, default=10,
+        help='Early stopping patience (default: 10)'
+    )
+    parser.add_argument(
+        '--output', type=str, default='trained_model.h5',
+        help='Output path for trained model (default: trained_model.h5)'
+    )
+    parser.add_argument(
+        '--demo', action='store_true',
+        help='Run with synthetic data (demo mode)'
+    )
+    
+    args = parser.parse_args()
+    
     print("=" * 60)
-    print("MODEL TRAINING DEMO")
+    print("VOICE MODEL TRAINING")
     print("=" * 60)
-    print("\nThis demonstrates how to train the neural network.")
-    print("For a real startup, you'd collect actual call recordings.\n")
+    print(f"\nTimestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Settings:")
+    print(f"  Data directory: {args.data_dir}")
+    print(f"  Epochs: {args.epochs}")
+    print(f"  Batch size: {args.batch_size}")
+    print(f"  Learning rate: {args.learning_rate}")
+    print(f"  Early stopping patience: {args.patience}")
+    print(f"  Output model: {args.output}")
     
-    # Step 1: Create synthetic training data (for demo)
-    print("Step 1: Creating synthetic training data...")
-    print("(In production, you'd use real recorded calls)\n")
-    
-    # Generate synthetic examples
-    np.random.seed(42)
-    training_examples = []
-    
-    for i in range(100):  # 100 synthetic examples
-        # Random features
-        features_list = []
-        for j in range(50):  # 50 frames per example
-            features = {
-                'rms_energy': np.random.uniform(0.01, 0.1),
-                'pitch_hz': np.random.uniform(80, 300),
-                'speaking_rate': np.random.uniform(0, 1),
-                'processing_time_ms': 5.0
-            }
-            features_list.append(features)
+    if args.demo:
+        # Demo mode with synthetic data
+        print("\n" + "-" * 60)
+        print("DEMO MODE: Using synthetic data")
+        print("-" * 60)
         
-        # Random confidence level
-        confidence = np.random.uniform(0.3, 0.9)
+        np.random.seed(42)
+        training_examples = []
         
-        example = {
-            'audio_file': f'synthetic_{i}.wav',
-            'features': features_list,
-            'targets': {
-                'pitch_shift': (confidence - 0.5) * 4.0,
-                'energy_multiplier': 0.8 + (confidence * 0.4),
-                'pace_multiplier': 1.0
-            },
-            'labels': {
-                'confidence': confidence,
-                'energy': 1.0,
-                'pace': 1.0
+        for i in range(100):
+            features_list = []
+            for j in range(50):
+                features = {
+                    'rms_energy': np.random.uniform(0.01, 0.1),
+                    'pitch_hz': np.random.uniform(80, 300),
+                    'speaking_rate': np.random.uniform(0, 1),
+                }
+                features_list.append(features)
+            
+            confidence = np.random.uniform(0.3, 0.9)
+            
+            example = {
+                'features': features_list,
+                'targets': {
+                    'pitch_shift': (confidence - 0.5) * 4.0,
+                    'energy_multiplier': 0.8 + (confidence * 0.4),
+                    'pace_multiplier': 1.0
+                }
             }
-        }
-        training_examples.append(example)
+            training_examples.append(example)
+        
+        trainer = VoiceModelTrainer()
+        X_train, y_train, X_val, y_val = trainer.prepare_dataset(training_examples)
+        
+    else:
+        # Production mode with preprocessed Common Voice data
+        print("\n" + "-" * 60)
+        print("LOADING PREPROCESSED DATA")
+        print("-" * 60)
+        
+        X_train, y_train, X_val, y_val = load_preprocessed_data(args.data_dir)
+        trainer = VoiceModelTrainer()
     
-    print(f"✓ Created {len(training_examples)} synthetic examples")
+    # Train model
+    print("\n" + "-" * 60)
+    print("TRAINING")
+    print("-" * 60)
     
-    # Step 2: Prepare dataset
-    print("\nStep 2: Preparing dataset...")
-    trainer = VoiceModelTrainer()
-    X_train, y_train, X_val, y_val = trainer.prepare_dataset(training_examples)
-    
-    # Step 3: Train model
-    print("\nStep 3: Training model...")
     trainer.train(
         X_train, y_train,
         X_val, y_val,
-        epochs=50,  # Fewer epochs for demo
-        batch_size=32,
-        learning_rate=0.001
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        learning_rate=args.learning_rate
     )
     
-    # Step 4: Evaluate
-    print("\nStep 4: Evaluating model...")
+    # Evaluate
+    print("\n" + "-" * 60)
+    print("EVALUATION")
+    print("-" * 60)
     trainer.evaluate(X_val, y_val)
     
-    # Step 5: Save
-    print("\nStep 5: Saving trained model...")
-    trainer.save_model('models/demo_trained_model.h5')
+    # Save model
+    print("\n" + "-" * 60)
+    print("SAVING MODEL")
+    print("-" * 60)
+    trainer.save_model(args.output)
+    
+    # Save training log
+    if trainer.history:
+        save_training_log(trainer.history, 'training_log.txt')
     
     print("\n" + "=" * 60)
-    print("NEXT STEPS FOR REAL TRAINING")
+    print("TRAINING COMPLETE")
     print("=" * 60)
-    print("\n1. Collect real audio data:")
-    print("   - Record practice calls")
-    print("   - Label with confidence ratings (1-10)")
-    print("   - Store as WAV files")
-    print("\n2. Use TrainingDataCollector:")
-    print("   - Extract features from recordings")
-    print("   - Create training examples")
-    print("\n3. Train on real data:")
-    print("   - Use VoiceModelTrainer")
-    print("   - Monitor validation loss")
-    print("   - Save best model")
-    print("\n4. Deploy trained model:")
-    print("   - Load in realtime_system.py")
-    print("   - Test on live audio")
-    print("   - Collect user feedback")
-    print("\n" + "=" * 60)
+    print(f"\nModel saved to: {args.output}")
+    print(f"Training log: training_log.txt")
+    print(f"Loss curves: training_log.png")
+    print("\nNext steps:")
+    print("  1. Run 'python evaluate_model.py' to test the model")
+    print("  2. Load in realtime_system.py for live voice modification")
+    print("=" * 60)
