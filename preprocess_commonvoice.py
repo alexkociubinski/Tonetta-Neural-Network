@@ -20,8 +20,11 @@ import librosa
 import os
 import argparse
 import time
-from typing import Dict, List, Tuple, Optional
+import json
 from datetime import datetime
+from typing import Dict, List, Tuple, Optional
+from concurrent.futures import ProcessPoolExecutor
+from functools import partial
 
 
 def load_commonvoice_streaming(
@@ -211,16 +214,15 @@ def extract_features_from_audio(
     rms = librosa.feature.rms(y=audio, frame_length=frame_size, hop_length=hop_length)[0]
     
     # 2. Compute pitch for the entire audio in one call (FAST)
-    # Using a simple yet fast approach with yin instead of pyin
+    # Using YIN instead of PYIN for 10x speed improvement
     try:
-        f0, voiced_flag, _ = librosa.pyin(
+        f0 = librosa.yin(
             audio,
             fmin=librosa.note_to_hz('C2'),
-            fmax=librosa.note_to_hz('C6'),  # Reduced range for speed
+            fmax=librosa.note_to_hz('C6'),
             sr=target_sr,
             frame_length=2048,
-            hop_length=hop_length,
-            fill_na=None  # Keep NaN for unvoiced
+            hop_length=hop_length
         )
     except Exception:
         # Fallback: skip pitch if it fails
@@ -250,44 +252,37 @@ def extract_features_from_audio(
 
 def generate_target_signals(features: Dict[str, float]) -> Dict[str, float]:
     """
-    Generate target control signals using heuristics.
-    
-    HEURISTICS (as specified in requirements):
-    - pitch_shift: 0 semitones (baseline, to be refined later)
-    - energy_boost: normalize to 0.7 target RMS
-    - pace_adjustment: 1.0x (no change for now)
-    
-    Args:
-        features: Dictionary with 'rms_energy', 'pitch_hz', 'speaking_rate'
-    
-    Returns:
-        Dictionary with target control signals
+    Generate target control signals using refined heuristics for confidence.
     """
-    # Target RMS for confident speech
+    # 1. Energy Boost: Target higher RMS for "confident" delivery
     target_rms = 0.07
-    
-    # Current RMS (handle very quiet audio)
     current_rms = max(features['rms_energy'], 0.001)
-    
-    # Energy boost: ratio to reach target RMS (clamped to reasonable range)
-    # The model outputs values in [-1, 1] range representing multiplier offset
-    # energy_multiplier = 1.0 + raw_output where raw_output in [-1, 1]
-    # So we calculate the needed raw_output
     needed_multiplier = target_rms / current_rms
-    needed_multiplier = np.clip(needed_multiplier, 0.5, 2.0)  # Clamp to safe range
-    energy_raw = (needed_multiplier - 1.0)  # Convert to [-1, 1] range
-    energy_raw = np.clip(energy_raw, -1.0, 1.0)
+    needed_multiplier = np.clip(needed_multiplier, 0.5, 2.0)
+    energy_raw = (needed_multiplier - 1.0)
     
-    # Pitch shift: 0 semitones for baseline (will be refined with more data)
+    # 2. Pitch Shift: Nudge towards a "confident" frequency (approx 140Hz)
+    # If pitch is too low, nudge up. If too high, nudge down slightly.
     pitch_shift = 0.0
+    if features['pitch_hz'] is not None:
+        target_f0 = 140.0 # Neutral/confident target
+        # Calculate semitone distance: 12 * log2(f2/f1)
+        semitone_diff = 12 * np.log2(target_f0 / features['pitch_hz'])
+        # Nudge only 20% towards the target to avoid sounding unnatural
+        pitch_shift = np.clip(semitone_diff * 0.2, -2.0, 2.0)
     
-    # Pace adjustment: 1.0x (no change) - raw value = 0.0
-    pace_raw = 0.0
+    # 3. Pace Adjustment: Small boost for more energetic delivery
+    # We'll nudge pace up slightly (1.05x) when energy is low but still speaking
+    pace_multiplier = 1.0
+    if features['speaking_rate'] > 0.5 and features['rms_energy'] < 0.05:
+        pace_multiplier = 1.05
+    
+    pace_raw = pace_multiplier - 1.0
     
     return {
-        'pitch_shift': pitch_shift,  # Will be scaled by ±5 semitones
-        'energy_multiplier': energy_raw,  # Raw output before scaling
-        'pace_multiplier': pace_raw  # Raw output before scaling
+        'pitch_shift': float(pitch_shift),
+        'energy_multiplier': float(energy_raw),
+        'pace_multiplier': float(pace_raw)
     }
 
 
@@ -307,49 +302,69 @@ def create_training_dataset(
     Returns:
         X_train, y_train, X_val, y_val
     """
-    print(f"\nExtracting features from {len(samples)} audio samples...")
+def process_single_sample(sample: Dict) -> Tuple[List, List]:
+    """Helper for parallel processing of a single sample."""
+    features_list = extract_features_from_audio(
+        sample['audio'],
+        sample['sample_rate']
+    )
+    
+    sample_features = []
+    sample_targets = []
+    
+    for features in features_list:
+        # Skip silent frames
+        if features['speaking_rate'] < 0.5:
+            continue
+        
+        # Feature vector
+        feature_vector = [
+            features['rms_energy'],
+            features['pitch_hz'] if features['pitch_hz'] else 150.0,
+            features['speaking_rate']
+        ]
+        sample_features.append(feature_vector)
+        
+        # Target vector
+        targets = generate_target_signals(features)
+        target_vector = [
+            targets['pitch_shift'],
+            targets['energy_multiplier'],
+            targets['pace_multiplier']
+        ]
+        sample_targets.append(target_vector)
+    
+    return sample_features, sample_targets
+
+def create_training_dataset(
+    samples: List[Dict],
+    output_dir: str = 'training_data',
+    validation_split: float = 0.2
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Process samples and create training/validation datasets using multiprocessing.
+    """
+    print(f"\nExtracting features from {len(samples)} audio samples using parallel processing...")
     
     all_features = []
     all_targets = []
     
     start_time = time.time()
     
-    for i, sample in enumerate(samples):
-        # Extract features for this audio
-        features_list = extract_features_from_audio(
-            sample['audio'],
-            sample['sample_rate']
-        )
+    # Use multiprocessing to speed up feature extraction
+    # Using 4-8 workers typically saturates CPU and provides 3-5x speedup
+    max_workers = min(os.cpu_count() or 4, 8)
+    
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        results = list(executor.map(process_single_sample, samples))
         
-        # Generate targets for each frame
-        for features in features_list:
-            # Skip silent frames
-            if features['speaking_rate'] < 0.5:
-                continue
-            
-            # Feature vector
-            feature_vector = [
-                features['rms_energy'],
-                features['pitch_hz'] if features['pitch_hz'] else 150.0,  # Default pitch
-                features['speaking_rate']
-            ]
-            all_features.append(feature_vector)
-            
-            # Target vector
-            targets = generate_target_signals(features)
-            target_vector = [
-                targets['pitch_shift'],
-                targets['energy_multiplier'],
-                targets['pace_multiplier']
-            ]
-            all_targets.append(target_vector)
-        
-        if (i + 1) % 50 == 0:
-            elapsed = time.time() - start_time
-            rate = (i + 1) / elapsed
-            remaining = (len(samples) - i - 1) / rate
-            print(f"  Processed {i + 1}/{len(samples)} samples... "
-                  f"({rate:.1f} samples/sec, ~{remaining:.0f}s remaining)")
+    for sample_features, sample_targets in results:
+        all_features.extend(sample_features)
+        all_targets.extend(sample_targets)
+    
+    processing_time = time.time() - start_time
+    print(f"✓ Extracted {len(all_features)} feature frames in {processing_time:.1f}s "
+          f"({len(samples)/processing_time:.1f} samples/sec)")
     
     print(f"✓ Extracted {len(all_features)} feature frames")
     

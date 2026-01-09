@@ -64,7 +64,7 @@ class VoiceControlModel:
     - Output: 16 inputs × 3 neurons + 3 biases = 51 parameters
     """
     
-    def __init__(self, input_size: int = 3, hidden_sizes: Tuple[int, int] = (32, 16)):
+    def __init__(self, input_size: int = 3, hidden_sizes: Tuple[int, ...] = (64, 32, 16)):
         """
         Initialize the neural network.
         
@@ -130,19 +130,27 @@ class VoiceControlModel:
             # Input layer - defines shape
             layers.Input(shape=(self.input_size,), name='audio_features'),
             
-            # Hidden layer 1 - learns basic patterns
+            # Hidden layer 1 - 64 neurons
             layers.Dense(
                 self.hidden_sizes[0],
                 activation='relu',
                 name='hidden_1',
-                kernel_initializer='he_normal'  # Good initialization for ReLU
+                kernel_initializer='he_normal'
             ),
             
-            # Hidden layer 2 - combines patterns
+            # Hidden layer 2 - 32 neurons
             layers.Dense(
                 self.hidden_sizes[1],
                 activation='relu',
                 name='hidden_2',
+                kernel_initializer='he_normal'
+            ),
+            
+            # Hidden layer 3 - 16 neurons
+            layers.Dense(
+                self.hidden_sizes[2],
+                activation='relu',
+                name='hidden_3',
                 kernel_initializer='he_normal'
             ),
             
