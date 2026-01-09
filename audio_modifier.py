@@ -76,12 +76,14 @@ class AudioModifier:
             return audio
         
         try:
-            # Use librosa's pitch shift (based on phase vocoder)
+            # Use librosa's pitch shift with optimized real-time parameters
             shifted = librosa.effects.pitch_shift(
                 y=audio,
                 sr=self.sample_rate,
                 n_steps=semitones,
-                bins_per_octave=12  # Standard Western music scale
+                bins_per_octave=12,
+                n_fft=512,      # Smaller FFT for 960-sample frames
+                hop_length=128  # Smaller hop for better real-time phase vocoding
             )
             return shifted
         except Exception as e:

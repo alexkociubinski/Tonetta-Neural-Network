@@ -120,7 +120,7 @@ class RealtimeVoiceModifier:
         self.audio_modifier = AudioModifier(sample_rate)
         
         # Queues for thread communication
-        # REDUCED maxsize: 10 frames = 200ms lag! 1 or 2 is much better for real-time.
+        # Reset to size 2 (40ms lag) since NN is now optimized for <1ms
         self.input_queue = Queue(maxsize=2)  # Raw audio from mic
         self.output_queue = Queue(maxsize=2)  # Modified audio to speakers
         

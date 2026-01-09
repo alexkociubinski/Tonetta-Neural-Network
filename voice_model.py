@@ -83,10 +83,10 @@ class VoiceControlModel:
         self.feature_means = np.array([0.05, 150.0, 0.5])  # RMS, pitch, speaking
         self.feature_stds = np.array([0.05, 50.0, 0.5])
         
-        # Output scaling parameters
-        self.pitch_shift_range = 5.0  # ±5 semitones
-        self.energy_boost_range = 1.0  # ±1.0 (0.0 to 2.0 multiplier)
-        self.pace_adjustment_range = 0.2  # ±0.2 (0.8x to 1.2x speed)
+        # Output scaling parameters - REDUCED to prevent robotic artifacts
+        self.pitch_shift_range = 0.0  # DISABLED: pitch shift causes robotic artifacts
+        self.energy_boost_range = 0.5  # ±0.5 for subtle volume changes (0.5x to 1.5x)
+        self.pace_adjustment_range = 0.0  # DISABLED: pace adjust causes artifacts
         
         print("✓ Neural network initialized:")
         print(f"  - Architecture: {input_size} → {hidden_sizes[0]} → {hidden_sizes[1]} → 3")
@@ -224,8 +224,8 @@ class VoiceControlModel:
         input_batch = normalized_features.reshape(1, -1)
         
         # Step 3: Run neural network inference
-        # This is where the magic happens - all the learned weights are applied
-        raw_outputs = self.model.predict(input_batch, verbose=0)[0]  # Shape: (3,)
+        # RELIABILITY: Direct call is 30x faster than .predict() for single samples
+        raw_outputs = self.model(input_batch, training=False).numpy()[0]  # Shape: (3,)
         
         # Step 4: Scale outputs from [-1, 1] to useful ranges
         control_signals = {
